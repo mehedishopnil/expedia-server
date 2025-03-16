@@ -153,22 +153,14 @@ async function run() {
 
     // ==================== Resorts Routes ====================
     app.get("/allResorts", async (req, res) => {
-      try {
-        const { page = 1, limit = 30 } = req.query;
-        const skip = (page - 1) * limit;
-
-        const resorts = await allResortDataCollection
-          .find()
-          .skip(skip)
-          .limit(Number(limit))
-          .toArray();
-
-        res.send(resorts);
-      } catch (error) {
-        console.error("Error fetching all resort data:", error);
-        res.status(500).send("Internal Server Error");
-      }
-    });
+     try {
+       const resorts = await allResortDataCollection.find().toArray();
+       res.send(resorts);
+     } catch (error) {
+       console.error("Error fetching all resort data:", error);
+       res.status(500).send("Internal Server Error");
+     }
+   });
 
     app.post("/resorts", async (req, res) => {
       try {
