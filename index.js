@@ -50,6 +50,7 @@ async function run() {
     const db = client.db("brianExpediaDB");
     const allResortDataCollection = db.collection("allResorts");
     const usersCollection = db.collection("users");
+    const allBookingsCollection = db.collection("allBookings");
 
     // ==================== Users Routes ====================
     app.post("/users", async (req, res) => {
@@ -174,10 +175,79 @@ async function run() {
     });
 
     // ==================== Bookings Routes ====================
-    // Placeholder for bookings routes
-    app.get("/bookings", (req, res) => {
-      res.send("Bookings routes will be implemented here.");
+
+// Create or Update a Booking (Upsert by email + resortId or _id)
+app.put("/bookings", async (req, res) => {
+  try {
+    const booking = req.body;
+
+    if (!booking.email || !booking.resortId) {
+      return res.status(400).json({ message: "Email and resortId are required" });
+    }
+
+    const filter = { email: booking.email, resortId: booking.resortId };
+    const update = { $set: booking };
+    const options = { upsert: true };
+
+    const result = await allBookingsCollection.updateOne(filter, update, options);
+    res.status(200).json({
+      success: true,
+      message: result.upsertedCount
+        ? "Booking created successfully"
+        : "Booking updated successfully",
     });
+  } catch (error) {
+    console.error("Error creating/updating booking:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Get Bookings by Email
+app.get("/bookings", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required in query" });
+    }
+
+    const bookings = await allBookingsCollection.find({ email }).toArray();
+    res.status(200).json(bookings);
+  } catch (error) {
+    console.error("Error fetching bookings by email:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Get All Bookings (Admin)
+app.get("/all-bookings", async (req, res) => {
+  try {
+    const allBookings = await allBookingsCollection.find().toArray();
+    res.status(200).json(allBookings);
+  } catch (error) {
+    console.error("Error fetching all bookings:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Delete a Booking by ID
+app.delete("/bookings/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await allBookingsCollection.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    res.status(200).json({ success: true, message: "Booking deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting booking:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
 
     // Health check route
     app.get("/", (req, res) => {
