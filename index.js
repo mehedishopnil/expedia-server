@@ -69,103 +69,51 @@ async function run() {
 app.post("/bookings", async (req, res) => {
   try {
     const bookingData = req.body;
-    
-    // Required fields validation
-    const requiredFields = [
-      'email', 'resortId', 'startDate', 'endDate', 
-      'guestInfo', 'paymentInfo', 'totalAmount'
-    ];
-    const missingFields = requiredFields.filter(field => !bookingData[field]);
-    
-    if (missingFields.length > 0) {
-      return res.status(400).json({ 
-        error: "Missing required fields", 
-        missingFields 
-      });
-    }
 
-    // Validate guest information
-    const requiredGuestFields = ['firstName', 'lastName', 'email', 'phone'];
-    const missingGuestFields = requiredGuestFields.filter(
-      field => !bookingData.guestInfo[field]
-    );
-    
-    if (missingGuestFields.length > 0) {
-      return res.status(400).json({ 
-        error: "Missing required guest information", 
-        missingGuestFields 
-      });
-    }
-
-    // Validate payment information
-    if (!bookingData.paymentInfo.cardNumber || 
-        !bookingData.paymentInfo.expiryDate || 
-        !bookingData.paymentInfo.cardName) {
-      return res.status(400).json({ 
-        error: "Payment information incomplete" 
-      });
-    }
-
-    // Check for existing booking conflict
-    const existingBooking = await Bookings.findOne({
-      resortId: bookingData.resortId,
-      startDate: { $lt: new Date(bookingData.endDate) },
-      endDate: { $gt: new Date(bookingData.startDate) },
-      status: { $in: ["confirmed", "pending"] }
-    });
-
-    if (existingBooking) {
-      return res.status(409).json({ 
-        error: "Booking conflict: Room already booked for selected dates" 
-      });
-    }
-
-    // Create new booking document
+    // Create booking object with meta info
     const now = new Date();
     const newBooking = {
       ...bookingData,
       bookingId: `TR-${Math.floor(100000 + Math.random() * 900000)}`,
-      status: "confirmed",
       createdAt: now,
       updatedAt: now,
-      paymentStatus: "completed",
       paymentDate: now
     };
 
-    // Save to database
+    // Insert into DB
     const result = await Bookings.insertOne(newBooking);
 
-    // Send confirmation email (pseudo-code)
-    // await sendConfirmationEmail(newBooking);
-
-    res.status(201).json({ 
-      message: "Booking confirmed successfully", 
+    // Send response back
+    res.status(201).json({
+      message: "Booking confirmed successfully",
       bookingId: newBooking.bookingId,
       data: {
         ...newBooking,
         _id: result.insertedId,
-        // Mask sensitive payment info
-        paymentInfo: {
-          ...newBooking.paymentInfo,
-          cardNumber: maskCardNumber(newBooking.paymentInfo.cardNumber)
-        }
+        paymentInfo: newBooking.paymentInfo?.cardNumber
+          ? {
+              ...newBooking.paymentInfo,
+              cardNumber: maskCardNumber(newBooking.paymentInfo.cardNumber)
+            }
+          : newBooking.paymentInfo
       }
     });
 
   } catch (error) {
     console.error("Booking error:", error);
-    res.status(500).json({ 
-      error: "Internal server error", 
-      details: error.message 
+    res.status(500).json({
+      error: "Internal server error",
+      details: error.message
     });
   }
 });
 
-// Helper function to mask card numbers
+// Helper to mask card numbers
 function maskCardNumber(cardNumber) {
   const last4 = cardNumber.slice(-4);
   return `•••• •••• •••• ${last4}`;
 }
+
 
 // Get user bookings
 app.get("/bookings", async (req, res) => {
