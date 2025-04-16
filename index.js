@@ -3,275 +3,324 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Validate environment variables
-if (!process.env.DB_PASS) {
-  console.error("DB_PASS environment variable is missing.");
-  process.exit(1);
-}
-
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(helmet()); // Add security headers
-app.use(morgan("combined")); // Log incoming requests
+app.use(helmet());
+app.use(morgan("dev"));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
-
-// MongoDB connection
-
+// MongoDB Setup
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.dhkkn.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
-
-
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
 
 async function run() {
   try {
     await client.connect();
-    console.log("Connected to MongoDB");
+    console.log("✅ Connected to MongoDB");
 
     const db = client.db("brianExpediaDB");
-    const allResortDataCollection = db.collection("allResorts");
-    const usersCollection = db.collection("users");
-    const allBookingsCollection = db.collection("allBookings");
+    const Users = db.collection("users");
+    const Resorts = db.collection("allResorts");
+    const Bookings = db.collection("allBookings");
 
-    // ==================== Users Routes ====================
+    // === Users === //
     app.post("/users", async (req, res) => {
-      try {
-        const { name, email } = req.body;
+      const { name, email, photoURL } = req.body;
+      if (!name || !email) return res.status(400).json({ error: "Name and email are required" });
 
-        if (!name || !email) {
-          return res.status(400).send("Name and email are required");
-        }
+      const existing = await Users.findOne({ email });
+      if (existing) return res.status(409).json({ error: "User already exists" });
 
-        const existingUser = await usersCollection.findOne({ email });
-        if (existingUser) {
-          return res.status(409).send("User with this email already exists");
-        }
-
-        const result = await usersCollection.insertOne(req.body);
-        res.status(201).send({
-          message: "User successfully added",
-          userId: result.insertedId,
-        });
-      } catch (error) {
-        console.error("Error adding user data:", error.message);
-        res.status(500).send("Internal Server Error");
-      }
+      const user = { name, email, photoURL, isAdmin: false, createdAt: new Date() };
+      const result = await Users.insertOne(user);
+      res.status(201).json({ message: "User created", data: { _id: result.insertedId, ...user } });
     });
 
     app.get("/users", async (req, res) => {
       const { email } = req.query;
-
-      try {
-        const user = await usersCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).json({ error: "User not found" });
-        }
-        res.json(user);
-      } catch (error) {
-        console.error("Error fetching user data:", error);
-        res.status(500).send("Internal Server Error");
-      }
+      const user = await Users.findOne({ email });
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
     });
 
-    app.get("/all-users", async (req, res) => {
-      try {
-        const users = await usersCollection.find().toArray();
-        res.send(users);
-      } catch (error) {
-        console.error("Error fetching all user data:", error);
-        res.status(500).send("Internal Server Error");
-      }
+    app.get("/all-users", async (_req, res) => {
+      const users = await Users.find().toArray();
+      res.json(users);
     });
 
     app.patch("/update-user", async (req, res) => {
       const { email, isAdmin } = req.body;
+      if (!email) return res.status(400).json({ error: "Email is required" });
 
-      try {
-        if (!email || typeof isAdmin !== "boolean") {
-          return res.status(400).send("Email and isAdmin status are required");
-        }
-
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: { isAdmin } }
-        );
-
-        if (result.modifiedCount === 0) {
-          return res.status(404).send("User not found or role not updated");
-        }
-
-        res.send({ success: true, message: "User role updated successfully" });
-      } catch (error) {
-        console.error("Error updating user role:", error);
-        res.status(500).send("Internal Server Error");
-      }
+      const result = await Users.updateOne({ email }, { $set: { isAdmin } });
+      res.json({ modified: result.modifiedCount });
     });
 
-    app.patch("/update-user-info", async (req, res) => {
-      const { email, age, securityDeposit, idNumber } = req.body;
-
-      try {
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: { age, securityDeposit, idNumber } }
-        );
-
-        if (result.modifiedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found or information not updated.",
-          });
-        }
-
-        res.json({
-          success: true,
-          message: "User information updated successfully.",
-        });
-      } catch (error) {
-        console.error("Error updating user info:", error);
-        res.status(500).json({ success: false, message: "Internal Server Error" });
-      }
-    });
-
-    // ==================== Resorts Routes ====================
-    app.get("/allResorts", async (req, res) => {
-     try {
-       const resorts = await allResortDataCollection.find().toArray();
-       res.send(resorts);
-     } catch (error) {
-       console.error("Error fetching all resort data:", error);
-       res.status(500).send("Internal Server Error");
-     }
-   });
-
-    app.post("/resorts", async (req, res) => {
-      try {
-        const resort = req.body;
-        const result = await allResortDataCollection.insertOne(resort);
-        res.send(result);
-      } catch (error) {
-        console.error("Error adding resort data:", error);
-        res.status(500).send("Internal Server Error");
-      }
-    });
-
-    // ==================== Bookings Routes ====================
-
-// Create or Update a Booking (Upsert by email + resortId or _id)
-app.put("/bookings", async (req, res) => {
+    // === Bookings ===
+app.post("/bookings", async (req, res) => {
   try {
-    const booking = req.body;
-
-    if (!booking.email || !booking.resortId) {
-      return res.status(400).json({ message: "Email and resortId are required" });
+    const bookingData = req.body;
+    
+    // Required fields validation
+    const requiredFields = [
+      'email', 'resortId', 'startDate', 'endDate', 
+      'guestInfo', 'paymentInfo', 'totalAmount'
+    ];
+    const missingFields = requiredFields.filter(field => !bookingData[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({ 
+        error: "Missing required fields", 
+        missingFields 
+      });
     }
 
-    const filter = { email: booking.email, resortId: booking.resortId };
-    const update = { $set: booking };
-    const options = { upsert: true };
+    // Validate guest information
+    const requiredGuestFields = ['firstName', 'lastName', 'email', 'phone'];
+    const missingGuestFields = requiredGuestFields.filter(
+      field => !bookingData.guestInfo[field]
+    );
+    
+    if (missingGuestFields.length > 0) {
+      return res.status(400).json({ 
+        error: "Missing required guest information", 
+        missingGuestFields 
+      });
+    }
 
-    const result = await allBookingsCollection.updateOne(filter, update, options);
-    res.status(200).json({
-      success: true,
-      message: result.upsertedCount
-        ? "Booking created successfully"
-        : "Booking updated successfully",
+    // Validate payment information
+    if (!bookingData.paymentInfo.cardNumber || 
+        !bookingData.paymentInfo.expiryDate || 
+        !bookingData.paymentInfo.cardName) {
+      return res.status(400).json({ 
+        error: "Payment information incomplete" 
+      });
+    }
+
+    // Check for existing booking conflict
+    const existingBooking = await Bookings.findOne({
+      resortId: bookingData.resortId,
+      startDate: { $lt: new Date(bookingData.endDate) },
+      endDate: { $gt: new Date(bookingData.startDate) },
+      status: { $in: ["confirmed", "pending"] }
     });
+
+    if (existingBooking) {
+      return res.status(409).json({ 
+        error: "Booking conflict: Room already booked for selected dates" 
+      });
+    }
+
+    // Create new booking document
+    const now = new Date();
+    const newBooking = {
+      ...bookingData,
+      bookingId: `TR-${Math.floor(100000 + Math.random() * 900000)}`,
+      status: "confirmed",
+      createdAt: now,
+      updatedAt: now,
+      paymentStatus: "completed",
+      paymentDate: now
+    };
+
+    // Save to database
+    const result = await Bookings.insertOne(newBooking);
+
+    // Send confirmation email (pseudo-code)
+    // await sendConfirmationEmail(newBooking);
+
+    res.status(201).json({ 
+      message: "Booking confirmed successfully", 
+      bookingId: newBooking.bookingId,
+      data: {
+        ...newBooking,
+        _id: result.insertedId,
+        // Mask sensitive payment info
+        paymentInfo: {
+          ...newBooking.paymentInfo,
+          cardNumber: maskCardNumber(newBooking.paymentInfo.cardNumber)
+        }
+      }
+    });
+
   } catch (error) {
-    console.error("Error creating/updating booking:", error);
-    res.status(500).json({ message: "Internal Server Error" });
+    console.error("Booking error:", error);
+    res.status(500).json({ 
+      error: "Internal server error", 
+      details: error.message 
+    });
   }
 });
 
-// Get Bookings by Email
+// Helper function to mask card numbers
+function maskCardNumber(cardNumber) {
+  const last4 = cardNumber.slice(-4);
+  return `•••• •••• •••• ${last4}`;
+}
+
+// Get user bookings
 app.get("/bookings", async (req, res) => {
   try {
     const { email } = req.query;
-
     if (!email) {
-      return res.status(400).json({ message: "Email is required in query" });
+      return res.status(400).json({ error: "Email is required" });
     }
 
-    const bookings = await allBookingsCollection.find({ email }).toArray();
-    res.status(200).json(bookings);
+    const bookings = await Bookings.find({ email })
+      .sort({ createdAt: -1 })
+      .project({
+        paymentInfo: 0 // Exclude payment details from listing
+      })
+      .toArray();
+
+    res.json({ 
+      count: bookings.length, 
+      data: bookings.map(booking => ({
+        ...booking,
+        // Format dates for display
+        startDate: formatDisplayDate(booking.startDate),
+        endDate: formatDisplayDate(booking.endDate)
+      }))
+    });
+
   } catch (error) {
-    console.error("Error fetching bookings by email:", error);
-    res.status(500).json({ message: "Internal Server Error" });
+    console.error("Error fetching bookings:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get All Bookings (Admin)
-app.get("/all-bookings", async (req, res) => {
+// Admin booking management
+app.get("/admin/bookings", async (req, res) => {
   try {
-    const allBookings = await allBookingsCollection.find().toArray();
-    res.status(200).json(allBookings);
-  } catch (error) {
-    console.error("Error fetching all bookings:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
-});
-
-// Delete a Booking by ID
-app.delete("/bookings/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const result = await allBookingsCollection.deleteOne({ _id: new ObjectId(id) });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, message: "Booking not found" });
+    const { status, resortId, startDate, endDate } = req.query;
+    const query = {};
+    
+    if (status) query.status = status;
+    if (resortId) query.resortId = resortId;
+    
+    // Date range filtering
+    if (startDate && endDate) {
+      query.startDate = { $gte: new Date(startDate) };
+      query.endDate = { $lte: new Date(endDate) };
     }
 
-    res.status(200).json({ success: true, message: "Booking deleted successfully" });
+    const bookings = await Bookings.find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ 
+      count: bookings.length, 
+      data: bookings 
+    });
+
   } catch (error) {
-    console.error("Error deleting booking:", error);
-    res.status(500).json({ message: "Internal Server Error" });
+    console.error("Admin bookings error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// Cancel booking
+app.put("/bookings/:id/cancel", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cancellationReason } = req.body;
 
-    // Health check route
-    app.get("/", (req, res) => {
-      res.send("Expedia brian server is running");
+    const booking = await Bookings.findOne({ _id: new ObjectId(id) });
+    
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    // Check if booking can be cancelled
+    if (booking.status === "cancelled") {
+      return res.status(400).json({ error: "Booking already cancelled" });
+    }
+
+    const now = new Date();
+    const refundDeadline = new Date(booking.startDate);
+    refundDeadline.setDate(refundDeadline.getDate() - 3); // 3-day cancellation policy
+
+    const update = {
+      status: "cancelled",
+      updatedAt: now,
+      cancellation: {
+        date: now,
+        reason: cancellationReason || "User requested",
+        refundEligible: now < refundDeadline
+      }
+    };
+
+    await Bookings.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: update }
+    );
+
+    // Process refund if eligible (pseudo-code)
+    // if (update.cancellation.refundEligible) {
+    //   await processRefund(booking.paymentInfo);
+    // }
+
+    res.json({ 
+      message: "Booking cancelled successfully",
+      refundEligible: update.cancellation.refundEligible
     });
 
-    // Start the server
-    app.listen(port, () => {
-      console.log(`Server is running on port ${port}`);
-    });
   } catch (error) {
-    console.error("Failed to connect to MongoDB:", error);
+    console.error("Cancel booking error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Helper function to format dates for display
+function formatDisplayDate(date) {
+  return new Date(date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+    // === Resorts ===
+    app.get("/allResorts", async (_req, res) => {
+      const resorts = await Resorts.find().toArray();
+      res.json(resorts);
+    });
+
+    app.post("/resorts", async (req, res) => {
+      const result = await Resorts.insertOne(req.body);
+      res.json(result);
+    });
+
+    // Health
+    app.get("/", (_req, res) => res.send("Server is running"));
+    app.get("/health", (_req, res) =>
+      res.json({ status: "ok", time: new Date(), db: client.topology?.isConnected() ? "connected" : "disconnected" })
+    );
+
+    // Start Server
+    app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
+  } catch (err) {
+    console.error("❌ MongoDB Connection Failed", err);
     process.exit(1);
   }
 }
 
-
-
-// Run the server
 run().catch(console.dir);
 
-// Gracefully close the MongoDB connection on process termination
-process.on("SIGINT", async () => {
-  await client.close();
-  console.log("MongoDB connection closed.");
-  process.exit();
-});
+// Graceful Shutdown
+["SIGINT", "SIGTERM"].forEach(signal =>
+  process.on(signal, async () => {
+    console.log(`👋 Received ${signal}, closing MongoDB`);
+    await client.close();
+    process.exit(0);
+  })
+);
